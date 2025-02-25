@@ -1,0 +1,156 @@
+==================================
+1 Deploy a Wallarm Filtering Node
+==================================
+
+A. F1 Installed Docker for Windows 10 and ran in CMD: docker run hello-world --> verified installation is working correctly
+
+B. F2 Download Wallarm Filtering Node in CMD: docker pull wallarm/node --> downloaded latest Wallarm Node
+
+C. F3 Create docker Node with name and ports 80/443 and save ID: docker run -d --name wallarm-node -p 80:80 -p 443:443 wallarm/node
+--> 16d927ddfa102bdeece630cedf2b67dc349b0baf4991f2414e076dddacede4c2
+
+D. F4 Verify container is running: docker ps --> showed no running container
+	docker ps -a --> 16d927ddfa10   wallarm/node   "/usr/local/bin/init"   10 minutes ago   Exited (1) 5 minutes ago              wallarm-node
+	docker logs wallarm-node --> ERROR: no WALLARM_API_TOKEN and no private key in /etc/wallarm/private.key 
+	docker rm wallarm-node --> wallarm-node
+
+E. Create Wallarm node first in Wallarm Console and retreive Token/Key
+	Name: Wallarm-Node-SEChallenge
+	Node Token: rmmYZy9C8g1xlIEhViNY2sjlqumoe54ofO29I9DXpPw88IPhM8BEoZF1PYXNG7Q0
+	
+F. F3 Repeat C with Token:
+docker run -d --name wallarm-node -p 8080:80 -p 443:443 -e WALLARM_API_HOST="api.wallarm.com" -e WALLARM_MODE="monitoring" -e WALLARM_API_TOKEN="rmmYZy9C8g1xlIEhViNY2sjlqumoe54ofO29I9DXpPw88IPhM8BEoZF1PYXNG7Q0" wallarm/node
+_______________________________________________________
+docker run -d --name wallarm-node -p 80:80 -p 443:443 \
+  -e WALLARM_API_HOST="api.wallarm.com" \
+  -e WALLARM_MODE="monitoring" \
+  -e WALLARM_API_TOKEN="rmmYZy9C8g1xlIEhViNY2sjlqumoe54ofO29I9DXpPw88IPhM8BEoZF1PYXNG7Q0" \
+  wallarm/node
+_______________________________________________________
+
+G. Verified container is running: docker ps --> 9529d7d66e9d   wallarm/node   "/usr/local/bin/init"   47 seconds ago   Up 46 seconds   0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp   wallarm-node
+
+===========================
+2. Set Up a Backend Origin 
+===========================
+
+A. F5 open shell inside Wallarm Container/CMD: docker exec -it wallarm-node /bin/bash
+
+B. F6 Edit nginx default.conf (site/application specific config) using vi text editor or nano: vi /etc/nginx/conf.d/default.conf
+	{i} to edit text in insert mode
+	insert configuration settings by right clicking in CMD after copying: 
+
+server {
+    listen 80;
+
+    location / {
+        proxy_pass http://httpbin.org;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen 443 ssl;
+    ssl_certificate /etc/nginx/ssl/cert.pem;
+    ssl_certificate_key /etc/nginx/ssl/key.pem;
+
+    location / {
+        proxy_pass http://httpbin.org;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+{Esc} to exit insert mode
+:wq (write and quit) and {Enter} to save/exit
+
+C: F7 Reload Nginx to apply the configuration CMD: nginx -s reload 
+	Received typo error "S" in server, corrected via Vi. 
+	Got hash warnings, corrected by adding to primary config: vi /etc/nginx/nginx.conf: (1024/64 values were not enough below)
+http {
+    ...
+    variables_hash_max_size 2048;
+    variables_hash_bucket_size 128;
+    ...
+}
+
+D. Troubleshoot unable to reach local host address/ports: docker logs wallarm-node
+	Unable to identify specific error. Restarted PC, restarted container in Docker.
+	Able to access on 80 but not 443 yet. Deleted and recreated container because of boot errors caused by 443 section from 2B.
+	
+	To Generate SLL Certs for 443:
+	docker run --rm -v $(pwd):/certs -w /certs ubuntu:latest bash -c "apt-get update && apt-get install -y openssl && openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout ./key.pem -out ./cert.pem -subj '/CN=localhost'"
+	docker run --rm -v C:\Users\codte\certs:/certs -w /certs ubuntu:latest bash -c "apt-get update && apt-get install -y openssl && openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout ./key.pem -out ./cert.pem -subj '/CN=localhost'"
+	
+	Recreate container, citing certs:
+	docker run -d --name wallarm-node -p 8080:80 -p 443:443 -e WALLARM_API_HOST="api.wallarm.com" -e WALLARM_MODE="monitoring" -e WALLARM_API_TOKEN="rmmYZy9C8g1xlIEhViNY2sjlqumoe54ofO29I9DXpPw88IPhM8BEoZF1PYXNG7Q0" -v C:\Users\codte\certs:/etc/nginx/ssl wallarm/node
+
+	Permissions issues when running nginx -s reload
+	Solved by copying certs to container:
+	docker cp C:/Users/codte/certs/key.pem wallarm-node:/etc/nginx/ssl/key.pem
+	docker cp C:/Users/codte/certs/cert.pem wallarm-node:/etc/nginx/ssl/cert.pem
+
+	Unable to resolve further errors currently. Restarting process only using port 80.
+
+E. docker run -d --name wallarm-node -p 80:80 -e WALLARM_API_HOST="api.wallarm.com" -e WALLARM_MODE="monitoring" -e WALLARM_API_TOKEN="rmmYZy9C8g1xlIEhViNY2sjlqumoe54ofO29I9DXpPw88IPhM8BEoZF1PYXNG7Q0" wallarm/node
+	 F5, F6
+Paste following into vi:
+server {
+    listen 80;
+
+    location / {
+        proxy_pass http://httpbin.org;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+	F7
+Added following to vi /etc/nginx/nginx.conf:
+    variables_hash_max_size 2048;
+    variables_hash_bucket_size 128;
+
+Restarted container in Docker, successfully reached port 80 again (httpbin.org at localhost)
+
+===================================
+3. Generate Traffic Using GoTestWaf
+===================================
+
+A. docker run --rm --network="host" -it -v C:/Users/codte/reports:/app/reports wallarm/gotestwaf --url=http://localhost:80
+	Attack did not detect WAP Node:
+C:\Users\codte>docker run --rm --network="host" -it -v C:/Users/codte/reports:/app/reports wallarm/gotestwaf --url=http://localhost:80
+INFO[0000] GoTestWAF started                             version=v0.5.6
+INFO[0000] Test cases loading started
+INFO[0000] Test cases loading finished
+INFO[0000] Test cases fingerprint                        fp=9a85b1a04fae92196ad6513c8aaa5995
+INFO[0000] Try to identify WAF solution
+INFO[0000] WAF was not identified
+INFO[0000] gohttp is used as an HTTP client to make requests  http_client=gohttp
+INFO[0000] WAF pre-check                                 url="http://localhost:80"
+ERRO[0000] caught error in main function                 error="WAF was not detected. Please use the '--blockStatusCodes' or '--blockRegex' flags. Use '--help' for additional info. Baseline attack status code: 200"
+
+B. Reviewed wallarm-node logs and found
+2025-02-24 19:17:50 2025/02/25 03:17:50 [error] 23#23: *51 WALLARM:ACL: unable to open database file. Folder paths: acl "/opt/wallarm/var/lib/wallarm-acl", mmdb "/opt/wallarm/var/lib/wallarm-acl", client: 172.17.0.1, server: , request: "GET / HTTP/1.1", host: "localhost:80"
+2025-02-24 19:17:50 2025/02/25 03:17:50 [error] 23#23: *53 WALLARM:ACL: unable to open database file. Folder paths: acl "/opt/wallarm/var/lib/wallarm-acl", mmdb "/opt/wallarm/var/lib/wallarm-acl", client: 172.17.0.1, server: , request: "GET / HTTP/1.1", host: "localhost:80"
+
+C. Reviewing documentation for deploying via Docker
+
+vi wallarm-node-conf.yaml:
+version: 2
+
+mode: connector-server
+
+connector:
+  address: ":80"
+
+D. After much troubleshooting, I realized the container logs seem to be the WAF blocking the gotestwaf attacks, it just happens to be that the gotestwaf is not detecting the waf.
+Example:
+2025-02-24 19:43:13 2025/02/25 03:43:13 [error] 30#30: *11 WALLARM:ACL: unable to open database file. Folder paths: acl "/opt/wallarm/var/lib/wallarm-acl", mmdb "/opt/wallarm/var/lib/wallarm-acl", client: 172.17.0.1, server: , request: "GET /?82ff67d54c=%3Cscript%3Ealert%28%27union%20select%20password%20from%20users%27%29%3C%2Fscript%3E HTTP/1.1", host: "localhost:80"
+This specifically appears to be an attempted SQL injection (union/select).
+
